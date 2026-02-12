@@ -6,6 +6,8 @@ evidence completion and citation-gated answer generation.
 
 Personal research project. Author: S.Chang.
 
+Chinese deployment guide: [README.zh-CN.md](README.zh-CN.md).
+
 ## What is inside
 
 | Path | Purpose |
