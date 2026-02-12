@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="离线知识库轻量控制台">
+  <title>知识库控制台</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="/styles.css?v=v11-debug-20261117">
+  <link rel="stylesheet" href="/backend-switch.css?v=api-switch-20260918">
+  <link rel="stylesheet" href="/query-analysis.css?v=query-analysis-20260917">
+  <link rel="stylesheet" href="/ai-config.css?v=provider-plans-20260920">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <header class="topbar">
+      <div class="brand"><div class="brand-mark">KB</div><div><h1>知识库控制台</h1><p>可溯源检索与回答原型</p></div></div>
+      <div class="topbar-actions"><label class="kb-switcher" for="knowledge-base-select"><span>当前知识库</span><select id="knowledge-base-select" aria-label="当前知识库"><option value="">读取中…</option></select></label><button id="create-knowledge-base" class="text-button" type="button">新建知识库</button><label class="debug-toggle" for="debug-toggle" title="显示状态、置信度、警告与追问改写等诊断信息"><input id="debug-toggle" type="checkbox"><span>DEBUG</span></label><span id="pipeline-badge" class="badge muted">检测中</span><a id="api-docs-link" href="/docs" target="_blank" rel="noreferrer" class="text-button">API 文档</a></div>
+    </header>
+    <div class="shell-body">
+      <aside class="sidebar">
+        <button class="nav-item active" data-page="ingestion"><i class="bi bi-cloud-arrow-up nav-icon" aria-hidden="true"></i><span>入库</span></button>
+        <button class="nav-item" data-page="code"><i class="bi bi-file-earmark-code nav-icon" aria-hidden="true"></i><span>代码库</span></button>
+        <button class="nav-item" data-page="search"><i class="bi bi-search nav-icon" aria-hidden="true"></i><span>检索</span></button>
+        <button class="nav-item" data-page="chat"><i class="bi bi-chat-square-text nav-icon" aria-hidden="true"></i><span>问答</span></button>
+        <button class="nav-item" data-page="glossary"><i class="bi bi-book nav-icon" aria-hidden="true"></i><span>术语库</span></button>
+        <button class="nav-item" data-page="settings"><i class="bi bi-gear nav-icon" aria-hidden="true"></i><span>配置</span></button>
+        <div class="sidebar-footnote"><span class="status-dot" id="sidebar-status-dot"></span><span id="sidebar-status">连接检测中</span></div>
+      </aside>
+      <main class="content">
+        <section id="page-ingestion" class="page active">
+          <div class="page-heading"><div><p class="eyebrow">DOCUMENT INGESTION</p><h2>入库</h2><p class="page-description">上传 PDF、DOCX、PPTX 或 UTF-8 文本文档，查看切片和索引处理状态。</p></div><button id="refresh-documents" class="button secondary">刷新状态</button></div>
+          <div id="global-alert" class="alert hidden"></div>
+          <div class="upload-card card"><div id="drop-zone" class="drop-zone" tabindex="0"><div class="upload-symbol"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></div><h3>拖拽文件到这里</h3><p>支持 PDF、DOCX、PPTX、TXT、MD、CSV，单文件最大 50 MiB；可一次拖入或选择多个文件，按队列逐个处理；代码文件请到「代码库」页面入库</p><input id="file-input" type="file" multiple accept=".pdf,.docx,.pptx,.txt,.md,.csv,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation" hidden><button id="choose-file" class="button primary" type="button">选择文件</button><div id="upload-queue" class="upload-queue hidden" aria-live="polite"></div></div><div class="prototype-note"><strong>原型提示</strong><span>已接入 PDF（页码）、DOCX（段落/表格）和 PPTX（幻灯片）解析；纯文本按 UTF-8 读取。多个文件按队列顺序上传，每个文件写入共享卷后各自进入 Redis/Celery，由独立 Worker 处理。代码素材在「代码库」页面单独入库与查看。</span></div></div>
+          <div class="section-heading"><div><h3>文档列表</h3><p>处理完成后状态会变为 ready，才适合进行检索。</p></div><span id="document-count" class="count-label">0 个文档</span></div>
+          <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>文件</th><th>格式</th><th>状态</th><th>Chunks</th><th>Document ID</th><th>Version ID</th><th>时间</th><th>错误/操作</th></tr></thead><tbody id="documents-body"><tr><td colspan="8" class="empty-cell">正在读取文档列表…</td></tr></tbody></table></div></div>
+          <div class="pager"><button id="documents-prev" class="button secondary" type="button">上一页</button><span id="documents-page-label" class="count-label">第 1 / 1 页</span><button id="documents-next" class="button secondary" type="button">下一页</button></div>
+        </section>
+        <section id="page-code" class="page">
+          <div class="page-heading"><div><p class="eyebrow">CODE LIBRARY</p><h2>代码库</h2><p class="page-description">选择代码文件夹或上传 ZIP，递归识别代码文件并按函数/类切分入库。</p></div><button id="refresh-code" class="button secondary">刷新状态</button></div>
+          <div id="code-alert" class="alert hidden"></div>
+          <div class="upload-card card"><div id="code-drop-zone" class="drop-zone" tabindex="0"><div class="upload-symbol"><i class="bi bi-file-earmark-code" aria-hidden="true"></i></div><h3>拖入 ZIP，或选择代码文件夹</h3><p>递归读取文件夹；自动跳过 .git、node_modules、venv、dist 等目录与二进制文件；单文件最大 2 MiB</p><input id="code-folder-input" type="file" webkitdirectory directory multiple hidden><input id="code-zip-input" type="file" accept=".zip,application/zip" hidden><div class="code-upload-actions"><button id="choose-code-folder" class="button primary" type="button">选择代码文件夹</button><button id="choose-code-zip" class="button secondary" type="button">上传 ZIP</button></div><div id="code-selected" class="selected-file hidden"></div></div><div class="prototype-note"><strong>目录规则</strong><span>同名路径再次上传会替换原文档（保留 Document ID）；ZIP 按相对路径递归入库，路径穿越与忽略目录会被跳过。</span></div></div>
+          <div class="section-heading"><div><h3>代码文件</h3><p>只显示代码素材；文档素材在「入库」页单独管理，两处列表互不可见。</p></div><span id="code-count" class="count-label">0 个文件</span></div>
+          <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>文件</th><th>格式</th><th>状态</th><th>Chunks</th><th>Document ID</th><th>Version ID</th><th>时间</th><th>错误/操作</th></tr></thead><tbody id="code-body"><tr><td colspan="8" class="empty-cell">正在读取代码列表…</td></tr></tbody></table></div></div>
+          <div class="pager"><button id="code-prev" class="button secondary" type="button">上一页</button><span id="code-page-label" class="count-label">第 1 / 1 页</span><button id="code-next" class="button secondary" type="button">下一页</button></div>
+        </section>
+        <section id="page-search" class="page">
+          <div class="page-heading"><div><p class="eyebrow">RETRIEVAL &amp; ANSWERS</p><h2>检索</h2><p class="page-description">先看证据，再生成带来源的回答。</p></div></div>
+          <div class="card query-card"><label for="question-input">你的问题</label><textarea id="question-input" rows="3" placeholder="例如：入库 worker 使用什么组件？（Shift+Enter 发送）"></textarea><div class="query-options"><label class="analysis-toggle"><input id="source-document-input" type="checkbox" checked><span>根据文档回答</span><span class="option-hint">PDF / DOCX / PPTX / 文本</span></label><label class="analysis-toggle"><input id="source-code-input" type="checkbox"><span>根据代码回答</span><span class="option-hint">按函数/类切片的代码片段</span></label><label class="analysis-toggle"><input id="semantic-analysis-input" type="checkbox" checked><span>自动语义分析</span><span class="option-hint">提取主题词、编号并扩展受控同义词</span></label><span class="divergent-hint">数据源至少勾选一种：可只根据文档、只根据代码，或两者都勾选。「发散型回答」在检索证据上做推断与延伸，每条仍要求引用证据。</span></div><div class="query-actions"><button id="search-button" class="button secondary">只检索证据</button><button id="answer-button" class="button primary">检索并回答<small><i class="bi bi-shift nav-icon" aria-hidden="true"></i><i class="bi bi-arrow-return-left"></i></small></button><button id="divergent-button" class="button secondary divergent-button" type="button" title="在检索证据上做推断、类比与延伸，每条推演仍要求引用证据">发散型回答</button></div><div id="search-progress" class="search-progress hidden"></div></div>
+          <div id="search-alert" class="alert hidden"></div><div id="answer-panel" class="hidden"></div>
+          
+          <div class="section-heading results-heading"><div><h3>证据</h3><p id="retrieval-summary">输入问题后查看命中片段、评分和来源。</p><p id="query-analysis-summary" class="query-analysis-summary"></p></div><span id="retrieval-revision" class="count-label"></span></div><div id="evidence-list" class="evidence-list"><div class="card empty-state">还没有检索结果。</div></div>
+        </section>
+        <section id="page-chat" class="page">
+          <div class="page-heading"><div><p class="eyebrow">HISTORY &amp; MULTI-TURN Q&amp;A</p><h2>问答</h2><p class="page-description">左侧是历史会话；同一会话里的追问会带上此前问答作为上下文，答案仍逐条引用本轮知识库证据。</p></div><button id="new-conversation" class="button primary" type="button">新建会话</button></div>
+          <div id="chat-alert" class="alert hidden"></div>
+          <div class="chat-layout">
+            <aside class="chat-sidebar card">
+              <div class="chat-sidebar-head"><strong>历史会话</strong><span id="conversation-count" class="count-label">0 个</span></div>
+              <div id="conversation-list" class="conversation-list"><p class="empty-cell">正在读取会话…</p></div>
+            </aside>
+            <div class="chat-main card">
+              <header class="chat-main-head">
+                <div><h3 id="chat-title">新会话</h3><p id="chat-subtitle" class="chat-subtitle">在下方输入第一个问题；发送后会创建一个新会话。</p></div>
+                <div class="chat-main-actions"><button id="rename-conversation" class="button secondary xs" type="button" hidden>重命名</button><button id="delete-conversation" class="button secondary xs" type="button" hidden>删除会话</button></div>
+              </header>
+              <div id="chat-thread" class="chat-thread" aria-live="polite"></div>
+              <form id="chat-form" class="chat-composer">
+                <label class="sr-only" for="chat-input">你的问题</label>
+                <textarea id="chat-input" rows="2" placeholder="继续追问，例如：它的重试策略是什么？（Enter 发送，Shift+Enter 换行）"></textarea>
+                <div class="chat-composer-bar"><div class="query-options"><label class="analysis-toggle"><input id="chat-source-document" type="checkbox" checked><span>根据文档回答</span></label><label class="analysis-toggle"><input id="chat-source-code" type="checkbox"><span>根据代码回答</span></label><label class="analysis-toggle"><input id="chat-divergent" type="checkbox"><span>发散型回答</span></label></div><button id="chat-send" class="button primary" type="submit">发送</button></div>
+              </form>
+            </div>
+          </div>
+        </section>
+        <section id="page-glossary" class="page">
+          <div class="page-heading"><div><p class="eyebrow">GLOSSARY</p><h2>术语库</h2><p class="page-description">查看各文档抽取的术语与缩写对照，用于查询期缩写展开。</p></div><button id="refresh-glossary" class="button secondary">刷新</button></div>
+          <div id="glossary-alert" class="alert hidden"></div>
+          <div class="section-heading"><div><h3>全部术语</h3><p>来源为入库期术语段检测与 AI 抽取，按术语排序分页显示。</p></div><span id="glossary-total" class="count-label">0 条</span></div>
+          <div class="card table-card"><div class="table-wrap"><table><thead><tr><th>术语</th><th>全称 / 展开</th><th>来源文档</th><th>来源</th><th>Chunk</th><th>操作</th></tr></thead><tbody id="glossary-body"><tr><td colspan="6" class="empty-cell">正在读取术语库…</td></tr></tbody></table></div></div>
+          <div class="pager"><button id="glossary-prev" class="button secondary" type="button">上一页</button><span id="glossary-page-label" class="count-label">第 1 / 1 页</span><button id="glossary-next" class="button secondary" type="button">下一页</button></div>
+        </section>
+        <section id="page-settings" class="page">
+          <div class="page-heading"><div><p class="eyebrow">RUNTIME CONFIGURATION</p><h2>配置</h2><p class="page-description">编辑并切换主 AI 与 Embedding 服务，查看当前检索配置。</p></div><button id="refresh-settings" class="button secondary">刷新状态</button></div>
+          <div id="settings-alert" class="alert hidden"></div><div class="settings-grid">
+            <div class="card settings-card"><div class="card-title"><h3>服务连接</h3><span id="settings-api-status" class="status-pill">检测中</span></div><div class="backend-switch"><label for="api-base-input">后端地址</label><div class="backend-switch-row"><input id="api-base-input" type="text" placeholder="留空 = 同源；如 http://localhost:8081" autocomplete="off"><button id="api-base-apply" class="button secondary xs" type="button">切换并刷新</button><button id="api-base-reset" class="button secondary xs" type="button">恢复同源</button></div><p class="option-hint">当前：<span id="current-api-base">同源（当前页面）</span>。切换后整页会用新后端重新加载文档、术语与检索，选择保存在本机。</p></div><dl id="connection-list" class="definition-list"></dl><div class="card-actions"><a id="swagger-link" class="button secondary" href="#" target="_blank" rel="noreferrer">打开 Swagger</a><button id="copy-diagnostics" class="button secondary">复制诊断信息</button></div></div>
+            <div class="card settings-card settings-provider-card"><div class="card-title"><h3>主 AI 引擎</h3><span id="ai-provider-badge" class="provider-badge">读取中</span></div>
+              <form id="ai-provider-form" class="provider-form">
+                <label for="ai-provider-select">服务商</label><select id="ai-provider-select"><option value="ollama">Ollama</option><option value="openai">OpenAI 兼容接口（DeepSeek 等）</option></select>
+                <label for="ai-endpoint-input">Endpoint 基址</label><input id="ai-endpoint-input" type="url" required placeholder="https://api.deepseek.com/v1" autocomplete="url">
+                <p class="field-hint">填服务根地址；OpenAI 兼容接口会自动追加 /chat/completions，Ollama 会自动追加 /api/chat。</p>
+                <label for="ai-model-input">模型名称</label><input id="ai-model-input" type="text" required placeholder="deepseek-chat 或 qwen3:14b" autocomplete="off">
+                <label for="ai-api-key-input">API Key <span id="ai-api-key-state" class="key-state"></span></label><input id="ai-api-key-input" type="password" placeholder="留空保留当前 Key" autocomplete="new-password">
+                <label class="clear-key-option"><input id="ai-clear-key-input" type="checkbox"> 清除已保存的 Key</label>
+                <div class="provider-form-actions"><button id="save-ai-provider" class="button" type="submit">保存并切换</button><button id="reset-ai-provider" class="button secondary" type="button">恢复部署默认值</button><span id="ai-provider-feedback" class="form-feedback" role="status"></span></div>
+              </form>
+              <p class="config-hint">用于查询分析、证据重排、术语抽取和 grounded 回答。保存后新请求立即使用新服务商。</p>
+              <div class="structured-output-block">
+                <label for="ai-structured-mode">结构化输出方式</label>
+                <select id="ai-structured-mode"><option value="tool">工具调用（函数参数，推荐）</option><option value="json">JSON 模式（兼容旧模型或网关）</option></select>
+                <p class="field-hint">工具调用把 JSON Schema 作为函数参数提交，支持 strict 的模型会强制字段名；上游拒绝该请求形状时后端会自动降级为宽松工具或 JSON 模式。</p>
+                <div class="provider-form-actions"><button id="save-structured-output" class="button secondary" type="button">应用结构化输出方式</button><span id="structured-output-feedback" class="form-feedback" role="status"></span></div>
+              </div>
+            </div>
+            <div class="card settings-card settings-provider-card"><div class="card-title"><h3>Embedding</h3><span id="embedding-provider-badge" class="provider-badge">读取中</span></div>
+              <form id="embedding-provider-form" class="provider-form">
+                <label for="embedding-provider-select">服务商</label><select id="embedding-provider-select"><option value="ollama">Ollama</option><option value="openai">OpenAI 兼容接口</option></select>
+                <label for="embedding-endpoint-input">Endpoint 基址</label><input id="embedding-endpoint-input" type="url" required placeholder="http://127.0.0.1:11434" autocomplete="url">
+                <p class="field-hint">填服务根地址；OpenAI 兼容接口会自动追加 /embeddings，Ollama 会自动追加 /api/embed。</p>
+                <label for="embedding-model-input">Embedding 模型</label><input id="embedding-model-input" type="text" required placeholder="bge-m3" autocomplete="off">
+                <label for="embedding-api-key-input">API Key <span id="embedding-api-key-state" class="key-state"></span></label><input id="embedding-api-key-input" type="password" placeholder="留空保留当前 Key" autocomplete="new-password">
+                <label class="clear-key-option"><input id="embedding-clear-key-input" type="checkbox"> 清除已保存的 Key</label>
+                <div class="provider-form-actions"><button id="save-embedding-provider" class="button" type="submit">保存并切换</button><button id="reset-embedding-provider" class="button secondary" type="button">恢复部署默认值</button><span id="embedding-provider-feedback" class="form-feedback" role="status"></span></div>
+              </form>
+              <p class="config-hint">与主 AI 独立。更改服务商、Endpoint 或模型后，已有段落会在后台重新向量化。</p><p id="embedding-rebuild-state" class="config-hint"></p>
+            </div>
+            <div class="card settings-card provider-plans-card">
+              <div class="card-title"><div><h3>配置方案</h3><p class="config-hint">保存主 AI 与 Embedding 的完整配置快照，之后可一键切换做对比。</p></div><span id="active-provider-plan" class="provider-badge">自定义配置</span></div>
+              <form id="provider-plan-form" class="provider-plan-form"><label for="provider-plan-name">方案名称</label><input id="provider-plan-name" type="text" maxlength="80" required placeholder="例如：DeepSeek + BGE-M3"><button id="save-provider-plan" class="button" type="submit">保存当前配置</button></form>
+              <p id="provider-plan-feedback" class="form-feedback" role="status"></p>
+              <div id="provider-plan-list" class="provider-plan-list"><p class="empty-cell">正在读取配置方案…</p></div>
+            </div>
+            <div class="card settings-card"><div class="card-title"><h3>检索与回答</h3></div><dl id="model-list" class="definition-list"></dl></div>
+            <div class="card settings-card"><div class="card-title"><h3>检索策略</h3></div><label class="analysis-toggle"><input id="iterative-retrieval-input" type="checkbox" checked><span>迭代补全证据</span><span class="option-hint">首轮不足时扩展相邻段落并用补充关键词再检索，最多 3 轮；关闭可用于对比成功率与耗时</span></label></div>
+            <div class="card settings-card"><div class="card-title"><h3>入库限制</h3></div><dl id="ingestion-list" class="definition-list"></dl></div>
+            <div class="card settings-card warning-card"><div class="card-title"><h3>原型边界</h3></div><ul class="boundary-list"><li>当前检索索引仍保存在 API 进程内存，API 重启后需要重新加载索引。</li><li>检索使用配置的 embedding 模型进行向量召回，并与 BM25 组合；Model Service 仍为 stub。</li><li>文档术语库支持入库检测与空闲时人工触发的 AI 抽取，用于缩写展开召回。</li><li>grounded 模式调用配置的主 AI 引擎，答案仍经过服务端证据 ID 校验。</li><li>当前 CORS 允许跨域，尚未接入鉴权和 TLS，不建议直接暴露公网。</li></ul></div>
+              <div class="card settings-card danger-card"><div class="card-title"><h3>危险操作</h3></div><p class="danger-copy">清空文档、版本、Para-ID 切片和待处理文件。答案快照与人工反馈评测记录会保留。</p><button id="clear-knowledge-base" class="button danger-button">清空知识库</button></div>
+            </div>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div id="reader-modal" class="reader-modal hidden" role="dialog" aria-modal="true" aria-labelledby="reader-title">
+    <div class="reader-backdrop" data-reader-close></div>
+    <section class="reader-window card">
+      <header class="reader-header"><div><p class="eyebrow">SOURCE READER</p><h2 id="reader-title">文档阅读器</h2><p id="reader-location" class="reader-location"></p></div><button class="reader-close" type="button" data-reader-close aria-label="关闭阅读器">×</button></header>
+      <div id="reader-status" class="reader-status" role="status"></div>
+      <div id="reader-body" class="reader-body"></div>
+    </section>
+  </div>
+  <div id="glossary-modal" class="reader-modal hidden" role="dialog" aria-modal="true" aria-labelledby="glossary-title">
+    <div class="reader-backdrop" data-glossary-close></div>
+    <section class="reader-window card glossary-window">
+      <header class="reader-header"><div><p class="eyebrow">DOCUMENT GLOSSARY</p><h2 id="glossary-title">文档术语库</h2><p id="glossary-subtitle" class="reader-location"></p></div><button class="reader-close" type="button" data-glossary-close aria-label="关闭术语库">×</button></header>
+      <div id="glossary-status" class="reader-status" role="status"></div>
+      <div id="glossary-entries" class="reader-body glossary-entries"></div>
+    </section>
+  </div>
+  <div id="glossary-choice-modal" class="reader-modal hidden" role="dialog" aria-modal="true" aria-labelledby="glossary-choice-title">
+    <div class="reader-backdrop" data-glossary-choice-cancel></div>
+    <section class="reader-window card glossary-choice-window">
+      <header class="reader-header"><div><p class="eyebrow">GLOSSARY EXTRACTION</p><h2 id="glossary-choice-title">选择术语检测方式</h2></div><button class="reader-close" type="button" data-glossary-choice-cancel aria-label="取消术语提取">×</button></header>
+      <div class="glossary-choice-body">
+        <p id="glossary-choice-description"></p>
+        <p id="glossary-choice-status" class="reader-location" role="status"></p>
+        <div class="glossary-choice-actions">
+          <button type="button" class="button" data-glossary-strategy="ai_assisted">使用 AI 辅助</button>
+          <button type="button" class="button secondary" data-glossary-strategy="rules">重新检测</button>
+          <button type="button" class="button secondary" data-glossary-choice-cancel>取消</button>
+        </div>
+      </div>
+    </section>
+  </div>
+  <div id="text-input-modal" class="reader-modal hidden" role="dialog" aria-modal="true" aria-labelledby="text-input-title">
+    <div class="reader-backdrop" data-text-input-cancel></div>
+    <section class="reader-window card text-input-window">
+      <header class="reader-header"><div><p class="eyebrow">KNOWLEDGE BASE</p><h2 id="text-input-title">输入内容</h2></div><button class="reader-close" type="button" data-text-input-cancel aria-label="取消">×</button></header>
+      <form id="text-input-form" class="text-input-body">
+        <p id="text-input-description" class="text-input-description"></p>
+        <label id="text-input-label" for="text-input-value">内容</label>
+        <input id="text-input-value" type="text" autocomplete="off" required>
+        <div class="text-input-actions"><button type="button" class="button secondary" data-text-input-cancel>取消</button><button id="text-input-submit" type="submit" class="button primary">确定</button></div>
+      </form>
+    </section>
+  </div>
+  <script src="/markdown-it.min.js?v=markdown-it-14.1.0" defer></script>
+  <script src="/answer-markdown.js?v=answer-markdown-20261117" defer></script>
+  <script src="/app.js?v=v13-debug-20261117" defer></script>
+</body>
+</html>

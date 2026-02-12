@@ -1,0 +1,190 @@
+services:
+  gateway:
+    image: ${KB_NGINX_IMAGE:-docker.1ms.run/library/nginx:1.27-alpine}
+    ports:
+      - "${KB_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../web:/usr/share/nginx/html:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../backend
+      args:
+        BASE_IMAGE: ${KB_PYTHON_IMAGE:-docker.1ms.run/library/python:3.11-slim}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+        KB_GIT_TAG: ${KB_GIT_TAG:-}
+        KB_GIT_COMMIT: ${KB_GIT_COMMIT:-}
+    environment:
+      KB_ENVIRONMENT: compose
+      KB_MODEL_SERVICE_URL: http://model-service:8100
+      KB_AI_PROVIDER: ${KB_AI_PROVIDER:-ollama}
+      KB_AI_BASE_URL: ${KB_AI_BASE_URL:-}
+      KB_AI_MODEL: ${KB_AI_MODEL:-}
+      KB_AI_API_KEY: ${KB_AI_API_KEY:-}
+      KB_OLLAMA_BASE_URL: ${KB_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      KB_OLLAMA_MODEL: ${KB_OLLAMA_MODEL:-qwen3:14b}
+      KB_EMBEDDING_PROVIDER: ${KB_EMBEDDING_PROVIDER:-ollama}
+      KB_EMBEDDING_BASE_URL: ${KB_EMBEDDING_BASE_URL:-}
+      KB_EMBEDDING_API_KEY: ${KB_EMBEDDING_API_KEY:-}
+      KB_EMBEDDING_MODEL: ${KB_EMBEDDING_MODEL:-bge-m3}
+      KB_EMBEDDING_TIMEOUT_SECONDS: ${KB_EMBEDDING_TIMEOUT_SECONDS:-60}
+      KB_GENERATION_TIMEOUT_SECONDS: ${KB_GENERATION_TIMEOUT_SECONDS:-120}
+      KB_OLLAMA_NUM_PREDICT: ${KB_OLLAMA_NUM_PREDICT:-4096}
+      KB_RERANKER_BASE_URL: ${KB_RERANKER_BASE_URL:-}
+      KB_RERANKER_MODEL: ${KB_RERANKER_MODEL:-bge-reranker-v2-m3}
+      KB_RERANKER_TIMEOUT_SECONDS: ${KB_RERANKER_TIMEOUT_SECONDS:-20}
+      KB_REDIS_URL: redis://redis:6379/0
+      KB_POSTGRES_DSN: postgresql+asyncpg://kb:${POSTGRES_PASSWORD:-kb}@postgres:5432/kb
+      KB_MEILI_URL: http://meilisearch:7700
+      KB_INGESTION_DIR: /data/ingestion
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ingestion-data:/data/ingestion
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ../backend
+      args:
+        BASE_IMAGE: ${KB_PYTHON_IMAGE:-docker.1ms.run/library/python:3.11-slim}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+    command: ["celery", "-A", "kb.workers.celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
+    environment:
+      KB_ENVIRONMENT: compose
+      KB_REDIS_URL: redis://redis:6379/0
+      KB_POSTGRES_DSN: postgresql+asyncpg://kb:${POSTGRES_PASSWORD:-kb}@postgres:5432/kb
+      KB_MODEL_SERVICE_URL: http://model-service:8100
+      KB_MEILI_URL: http://meilisearch:7700
+      KB_API_INTERNAL_URL: http://api:8000
+      KB_OLLAMA_BASE_URL: ${KB_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      KB_EMBEDDING_PROVIDER: ${KB_EMBEDDING_PROVIDER:-ollama}
+      KB_EMBEDDING_BASE_URL: ${KB_EMBEDDING_BASE_URL:-}
+      KB_EMBEDDING_API_KEY: ${KB_EMBEDDING_API_KEY:-}
+      KB_EMBEDDING_MODEL: ${KB_EMBEDDING_MODEL:-bge-m3}
+      KB_EMBEDDING_TIMEOUT_SECONDS: ${KB_EMBEDDING_TIMEOUT_SECONDS:-60}
+      KB_INGESTION_DIR: /data/ingestion
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ingestion-data:/data/ingestion
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+    restart: unless-stopped
+
+  model-service:
+    build:
+      context: ../model-service
+      args:
+        BASE_IMAGE: ${KB_PYTHON_IMAGE:-docker.1ms.run/library/python:3.11-slim}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple}
+    expose:
+      - "8100"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  postgres:
+    # pgvector 官方镜像，PostgreSQL 16 与之前的 alpine 镜像同大版本，现有
+    # postgres-data 卷可直接沿用；扩展由 api 启动时的 CREATE EXTENSION 建立。
+    image: ${KB_POSTGRES_IMAGE:-docker.1ms.run/pgvector/pgvector:pg16}
+    environment:
+      POSTGRES_DB: kb
+      POSTGRES_USER: kb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kb}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kb -d kb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: ${KB_REDIS_IMAGE:-docker.1ms.run/library/redis:7.4-alpine}
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  meilisearch:
+    image: ${KB_MEILI_IMAGE:-docker.1ms.run/getmeili/meilisearch:v1.12}
+    environment:
+      MEILI_ENV: production
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-local-dev-only-change-me}
+    expose:
+      - "7700"
+    volumes:
+      - meilisearch-data:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  elasticsearch:
+    image: ${KB_ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:8.15.5}
+    profiles: ["search"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    restart: unless-stopped
+
+  ollama:
+    image: ${KB_OLLAMA_IMAGE:-ollama/ollama:0.3.12}
+    profiles: ["models"]
+    volumes:
+      - ollama-data:/root/.ollama
+    expose:
+      - "11434"
+    restart: unless-stopped
+
+volumes:
+  ingestion-data:
+  postgres-data:
+  redis-data:
+  meilisearch-data:
+  elasticsearch-data:
+  ollama-data:

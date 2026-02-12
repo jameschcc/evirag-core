@@ -1,0 +1,5 @@
+.backend-switch { padding-bottom: 13px; margin-bottom: 4px; border-bottom: 1px solid #edf1f2; }
+.backend-switch > label { display: block; margin-bottom: 7px; color: var(--muted); font-size: 12px; }
+.backend-switch-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.backend-switch-row input { flex: 1 1 220px; min-width: 0; padding: 8px 11px; border: 1px solid var(--line); border-radius: 9px; font-size: 12px; font-family: inherit; }
+.backend-switch .option-hint { margin: 8px 0 0; display: block; line-height: 1.6; }
